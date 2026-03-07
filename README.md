@@ -35,6 +35,24 @@ npm run dev:prod
 
 The server will run at `http://localhost:3000`.
 
+## Linting & Formatting
+
+The project comes with **ESLint** and **Prettier** configured to ensure code quality and consistent styling.
+
+To format your code:
+```bash
+npm run format
+```
+
+To run lint checks:
+```bash
+npm run lint
+```
+
+## CI/CD Pipeline
+
+A continuous integration (CI) pipeline is included via **GitHub Actions** (`.github/workflows/main.yml`). It automatically runs tests and linting on Push or Pull Requests to the `main` or `master` branches across multiple Node.js versions.
+
 ## Test Accounts
 
 - **Admin Account**:
