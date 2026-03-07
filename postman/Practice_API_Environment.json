@@ -1,0 +1,27 @@
+{
+  "id": "e2a27d42-0fbc-494f-b127-1f4803af368d",
+  "name": "Practice API Local Environment",
+  "values": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2026-03-07T00:00:00.000Z",
+  "_postman_exported_using": "Postman/11.0.0"
+}
