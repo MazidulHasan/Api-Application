@@ -1,0 +1,181 @@
+{
+  "info": {
+    "_postman_id": "e98d5c73-ec8e-4032-af25-30adeeb71471",
+    "name": "Reg",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "55210884",
+    "_collection_link": "https://go.postman.co/collection/55210884-e98d5c73-ec8e-4032-af25-30adeeb71471?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "Register New Dynamic User",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Generate random user data for true automation",
+              "pm.environment.set(\"dynamicEmail\", \"user_\" + pm.variables.replaceIn('{{$randomUUID}}') + \"@practice.com\");",
+              "pm.environment.set(\"dynamicPassword\", \"Pass123!\" + pm.variables.replaceIn('{{$randomInt}}'));",
+              "pm.environment.set(\"dynamicFirstName\", pm.variables.replaceIn('{{$randomFirstName}}'));",
+              "pm.environment.set(\"dynamicLastName\", pm.variables.replaceIn('{{$randomLastName}}'));"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 201 Created\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Response contains expected structure\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('message', 'User created successfully');",
+              "    pm.expect(jsonData).to.have.property('userId');",
+              "    pm.expect(jsonData).to.have.property('createdAt');",
+              "});",
+              "",
+              "pm.test(\"Response time is acceptable (under 1000ms)\", function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{dynamicEmail}}\",\n  \"password\": \"{{dynamicPassword}}\",\n  \"firstName\": \"{{dynamicFirstName}}\",\n  \"lastName\": \"{{dynamicLastName}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Validate Admin Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200 OK\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"User role is explicitly admin\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.user.role).to.eql('admin');",
+              "});",
+              "",
+              "// Save admin token separately",
+              "var jsonData = pm.response.json();",
+              "if(jsonData.accessToken) pm.environment.set(\"adminAccessToken\", jsonData.accessToken);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@practice.com\",\n  \"password\": \"password123\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Login Dynamic User",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200 OK\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response contains JWT tokens\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('accessToken');",
+              "    pm.expect(jsonData).to.have.property('refreshToken');",
+              "    pm.expect(jsonData).to.have.property('tokenType', 'Bearer');",
+              "});",
+              "",
+              "pm.test(\"User object in response matches auth context\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.user.email).to.eql(pm.environment.get(\"dynamicEmail\"));",
+              "});",
+              "",
+              "// Capture tokens for standard operations",
+              "var jsonData = pm.response.json();",
+              "if(jsonData.accessToken) pm.environment.set(\"accessToken\", jsonData.accessToken);",
+              "if(jsonData.refreshToken) pm.environment.set(\"refreshToken\", jsonData.refreshToken);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{dynamicEmail}}\",\n  \"password\": \"{{dynamicPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}
