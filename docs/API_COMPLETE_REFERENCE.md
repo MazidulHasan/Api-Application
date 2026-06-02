@@ -631,29 +631,89 @@ Content-Type: application/json
 
 ## 6. Section 04 — E2E Checkout Flow
 
-This section has the **most complex dependencies** in the suite. It is the convergence point of Sections 01 and 03. Each internal step must run in order.
+This section orchestrates a **4-step sequential workflow**: clear cart → add product → checkout → verify order. Every step depends on the previous one's side effects. The section has two distinct call chain perspectives documented for each endpoint:
+
+- **Basic Flow** — the minimum steps any real user needs to call this endpoint successfully
+- **This Test Suite's Automation Flow** — the full automated path from the Postman collection, which uses a dynamically registered user and an admin-created product
+
+> **For LLM test case generation:** Use the Basic Flow to generate standard user-journey tests. Use the Automation Flow to understand what state this specific test collection builds before each call.
+
+---
+
+### Section 04 — Basic Flow Overview
+
+The simplest real-world path through this entire section is:
+
+```
+Step 1 — Login
+   POST /auth/login
+   → gives you: accessToken
+
+Step 2 — Get a product ID (so you know what to add to cart)
+   GET /products
+   → gives you: a productId from the catalogue
+
+Step 3 — Add the product to your cart
+   POST /cart   { set only one productId from previous response , quantity }
+   → side effect: cart now has items
+
+Step 4 — Checkout
+   POST /checkout
+   → gives you: orderId, amount, status
+
+Step 5 — Verify your order
+   GET /orders
+   → confirms the order appears in history
+```
+
+> The **DELETE /cart** step (04.1) is a **test isolation guard**, not part of the real user journey. A real user does not clear their cart before shopping — this step only exists to prevent leftover test data from corrupting the `amount` assertion.
 
 ---
 
 ### [04.1] DELETE /cart — Clear Pre-existing Cart
 
-#### Call Chain — Required API Sequence
+#### What This Step Does
 
-> The cart belongs to an authenticated user. You must be logged in to clear it. This step exists purely to reset cart state — preventing leftover items from previous runs from corrupting the checkout total assertion in 04.3.
+Clears all items from the authenticated user's cart. This is a **test isolation step**, not a normal user action. Its sole purpose is to guarantee the cart is empty before items are added in 04.2, so the checkout total in 04.3 is deterministic.
+
+---
+
+#### Basic Flow — Minimum Steps to Call This Endpoint
+
+> You only need to be logged in. Any valid user account works.
 
 ```
-[Pre-request script fires automatically on 01.1]
+POST /auth/login   →  get accessToken
+        │
+        ▼
+✅  DELETE /cart    ←  YOU ARE HERE
+        └─ requires: accessToken
+        └─ side effect: cart is empty
+```
+
+| Step | Method | Endpoint | Body / Params | What It Gives You |
+|------|--------|----------|---------------|-------------------|
+| 1 | `POST` | `/auth/login` | `{ email, password }` | `accessToken` |
+| ✅ **2** | `DELETE` | `/cart` | — | Cart is cleared |
+
+---
+
+#### This Test Suite's Automation Flow
+
+> The test suite uses a dynamically created user (registered in 01.1, logged in in 01.2) rather than a pre-existing account.
+
+```
+[Pre-request script — auto]
    └─ generates: dynamicEmail, dynamicPassword
           │
           ▼
-[01.1]  POST /auth/register        → creates user in DB
+POST /auth/register   →  user account created in DB
           │
           ▼
-[01.2]  POST /auth/login           → sets: accessToken
+POST /auth/login      →  sets: accessToken
           │
           ▼
-✅ [04.1]  DELETE /cart              ← YOU ARE HERE
-             └─ side effect: cart is now empty
+✅  DELETE /cart       ← YOU ARE HERE
 ```
 
 | Step | Method | Endpoint | What It Gives You |
@@ -661,7 +721,7 @@ This section has the **most complex dependencies** in the suite. It is the conve
 | 1 | Pre-request script (auto) | — | `dynamicEmail`, `dynamicPassword` |
 | 2 | `POST` | `/auth/register` | User account in DB |
 | 3 | `POST` | `/auth/login` | `accessToken` |
-| ✅ **4** | `DELETE` | `/cart` | Empty cart (clean state for next step) |
+| ✅ **4** | `DELETE` | `/cart` | Empty cart (clean state for 04.2) |
 
 ---
 
@@ -674,7 +734,7 @@ Authorization: Bearer {{accessToken}}
 
 #### Expected Response — `200 OK`
 
-No specific body structure asserted.
+No specific body structure asserted — only the status code is checked.
 
 #### Assertions
 
@@ -682,44 +742,76 @@ No specific body structure asserted.
 |------|-----------|
 | Status is 200 | Cart cleared successfully |
 
-**Side effect:** Cart for the authenticated user is now empty.
+**Side effect:** The authenticated user's cart is now empty. All subsequent `POST /cart` calls start from a clean state.
 
 ---
 
-### [04.2] POST /cart — Add Extracted Product to Cart
+### [04.2] POST /cart — Add Product to Cart
 
-#### Call Chain — Required API Sequence
+#### What This Step Does
 
-> To add a product to cart you need: (1) a logged-in user, (2) a product that exists in the DB with a known ID, and (3) a clean cart. This step requires the most setup of any single request in the suite.
+Adds a product (by ID) at a specified quantity to the authenticated user's cart. The product must already exist in the database. In the test suite, the product is created by the admin in section 03. In a basic flow, you obtain a product ID from `GET /products`.
+
+---
+
+#### Basic Flow — Minimum Steps to Call This Endpoint
+
+> You need a logged-in user and a valid product ID. Use `GET /products` to discover an available product ID if you don't already have one.
 
 ```
-[Pre-request script fires automatically on 01.1]
+POST /auth/login   →  get accessToken
+        │
+        ▼
+GET /products      →  get a productId from the catalogue
+        │
+        ▼
+✅  POST /cart      ←  YOU ARE HERE
+        └─ body: { productId, quantity }
+        └─ requires: accessToken + a valid productId
+        └─ side effect: item added to cart
+```
+
+| Step | Method | Endpoint | Body / Params | What It Gives You |
+|------|--------|----------|---------------|-------------------|
+| 1 | `POST` | `/auth/login` | `{ email, password }` | `accessToken` |
+| 2 | `GET` | `/products` | `?page=1&limit=5` | A valid `productId` from the catalogue |
+| ✅ **3** | `POST` | `/cart` | `{ productId, quantity: 2 }` | Cart populated with chosen product |
+
+> **Note:** `GET /products` is optional if you already know a valid `productId`. But if generating test cases from scratch, always fetch products first to get a real ID.
+
+---
+
+#### This Test Suite's Automation Flow
+
+> The test suite creates its own product (via admin) to control the exact price (`149.99`), which is needed for the hard-coded total assertion (`299.98`) in 04.3. It also clears the cart first (04.1) to prevent stale data.
+
+```
+[Pre-request script — auto on 01.1]
    └─ generates: dynamicEmail, dynamicPassword
           │
           ▼
-[01.1]  POST /auth/register        → creates user in DB
+POST /auth/register          →  user in DB
           │
           ▼
-[01.2]  POST /auth/login           → sets: accessToken
+POST /auth/login             →  sets: accessToken
           │
-          ├────────────────────────────────────────────┐
-          │                                            │
-          ▼                                            ▼
-[01.3]  POST /auth/login (admin)   → sets: adminAccessToken
-                                            │
-                                    [Pre-request script (auto)]
-                                       └─ generates: dynamicProductName
-                                            │
-                                            ▼
-                                   [03.2]  POST /products  → sets: customProductId (price: 149.99)
-                                            │
-          │◄───────────────────────────────┘
+          ├─────────────────────────────────────────┐
+          │                                         ▼
+          │                          POST /auth/login (admin@practice.com)
+          │                              →  sets: adminAccessToken
+          │                                         │
+          │                          [Pre-request script — auto on 03.2]
+          │                              └─ generates: dynamicProductName
+          │                                         │
+          │                          POST /products →  sets: customProductId
+          │                                              price locked at 149.99
+          │◄────────────────────────────────────────┘
           ▼
-[04.1]  DELETE /cart               → cart is now empty
+DELETE /cart                 →  cart cleared (test isolation)
           │
           ▼
-✅ [04.2]  POST /cart                ← YOU ARE HERE
-             └─ adds customProductId at quantity 2
+✅  POST /cart                ←  YOU ARE HERE
+        └─ body: { productId: customProductId, quantity: 2 }
 ```
 
 | Step | Method | Endpoint | What It Gives You |
@@ -730,8 +822,8 @@ No specific body structure asserted.
 | 4 | `POST` | `/auth/login` (admin) | `adminAccessToken` |
 | 5 | Pre-request script (auto) | — | `dynamicProductName` |
 | 6 | `POST` | `/products` | `customProductId` (price: `149.99`) |
-| 7 | `DELETE` | `/cart` | Empty cart (clean state) |
-| ✅ **8** | `POST` | `/cart` | Cart populated with `customProductId × 2` |
+| 7 | `DELETE` | `/cart` | Empty cart |
+| ✅ **8** | `POST` | `/cart` | Cart has `customProductId × 2` |
 
 ---
 
@@ -754,8 +846,8 @@ Content-Type: application/json
 
 | Field | Type | Required | Value | Constraint |
 |-------|------|----------|-------|------------|
-| `productId` | string | Yes | `{{customProductId}}` | Product must exist in DB (created in 03.2) |
-| `quantity` | integer | Yes | `2` | **Hard-coded** — checkout total assertion relies on `149.99 × 2 = 299.98` |
+| `productId` | string | Yes | A valid product ID from the DB | Product must exist — use `GET /products` to retrieve IDs |
+| `quantity` | integer | Yes | `2` in this test | Must be `2` in this suite — `149.99 × 2 = 299.98` is asserted in 04.3 |
 
 #### Expected Response — `200 OK`
 
@@ -777,44 +869,82 @@ Content-Type: application/json
 | Cart contains item where `productId === customProductId` | Correct product in cart |
 | `item.quantity` = `2` | Correct quantity stored |
 
-**Side effect:** Cart now contains `customProductId` at quantity `2` (value: `$149.99 × 2 = $299.98`).
+**Side effect:** Cart now contains `customProductId` at quantity `2` (total value: `$149.99 × 2 = $299.98`).
 
 ---
 
 ### [04.3] POST /checkout — Checkout Order
 
-#### Call Chain — Required API Sequence
+#### What This Step Does
 
-> Checkout reads the server-side cart — there is no request body. The entire upstream chain must have run correctly for the total (`299.98`) assertion to pass. This is the deepest dependency point in the whole suite.
+Converts the authenticated user's current cart into a confirmed order. There is **no request body** — the server reads the cart state directly. Returns an `orderId`, the computed `amount`, and a `status` of `"confirmed"`.
+
+---
+
+#### Basic Flow — Minimum Steps to Call This Endpoint
+
+> You need to be logged in and have at least one item in your cart. That's all. The total is computed from whatever is in the cart at the time of checkout.
 
 ```
-[Pre-request script fires automatically on 01.1]
+POST /auth/login   →  get accessToken
+        │
+        ▼
+GET /products      →  get a productId
+        │
+        ▼
+POST /cart         →  add item to cart  { productId, quantity }
+        │              side effect: cart is non-empty
+        ▼
+✅  POST /checkout  ←  YOU ARE HERE
+        └─ no body — reads cart from server state
+        └─ requires: accessToken + non-empty cart
+        └─ returns: orderId, amount, status: "confirmed"
+```
+
+| Step | Method | Endpoint | Body / Params | What It Gives You |
+|------|--------|----------|---------------|-------------------|
+| 1 | `POST` | `/auth/login` | `{ email, password }` | `accessToken` |
+| 2 | `GET` | `/products` | `?page=1&limit=5` | A valid `productId` |
+| 3 | `POST` | `/cart` | `{ productId, quantity }` | Cart is non-empty |
+| ✅ **4** | `POST` | `/checkout` | — (no body) | `orderId`, `amount`, `status: "confirmed"` |
+
+> **If cart is empty when checkout is called:** The API will either return an error (e.g., `400 Bad Request`) or create a `$0` order, depending on server implementation. Always ensure at least one item is in the cart before calling checkout.
+
+---
+
+#### This Test Suite's Automation Flow
+
+> The test suite hard-codes `price: 149.99` and `quantity: 2` so the `amount` assertion (`299.98`) is deterministic. The cart is also explicitly cleared before adding items to prevent leftover state from previous runs.
+
+```
+[Pre-request script — auto on 01.1]
    └─ generates: dynamicEmail, dynamicPassword
           │
           ▼
-[01.1]  POST /auth/register        → creates user in DB
+POST /auth/register          →  user in DB
           │
           ▼
-[01.2]  POST /auth/login           → sets: accessToken
+POST /auth/login             →  sets: accessToken
           │
-          ├────────────────────────────────────────────┐
-          │                                            ▼
-          │                               [01.3]  POST /auth/login (admin) → sets: adminAccessToken
-          │                                            │
-          │                               [03.2]  POST /products           → sets: customProductId
-          │                                       (price hardcoded: 149.99) │
-          │◄───────────────────────────────────────────┘
+          ├─────────────────────────────────────────┐
+          │                                         ▼
+          │                          POST /auth/login (admin)
+          │                              →  sets: adminAccessToken
+          │                                         │
+          │                          POST /products →  sets: customProductId
+          │                                              price locked at 149.99
+          │◄────────────────────────────────────────┘
           ▼
-[04.1]  DELETE /cart               → cart is now empty
-          │
-          ▼
-[04.2]  POST /cart                 → cart has customProductId × 2
+DELETE /cart                 →  cart cleared
           │
           ▼
-✅ [04.3]  POST /checkout            ← YOU ARE HERE
-             └─ reads cart from server state
-             └─ asserts: amount = 149.99 × 2 = 299.98
-             └─ sets: latestOrderId
+POST /cart                   →  cart: { customProductId × 2 }
+          │
+          ▼
+✅  POST /checkout            ←  YOU ARE HERE
+        └─ asserts: amount = 149.99 × 2 = 299.98
+        └─ asserts: status = "confirmed"
+        └─ sets: latestOrderId
 ```
 
 | Step | Method | Endpoint | What It Gives You |
@@ -826,8 +956,8 @@ Content-Type: application/json
 | 5 | Pre-request script (auto) | — | `dynamicProductName` |
 | 6 | `POST` | `/products` | `customProductId` (price: `149.99`) |
 | 7 | `DELETE` | `/cart` | Empty cart |
-| 8 | `POST` | `/cart` | Cart with `customProductId × 2` |
-| ✅ **9** | `POST` | `/checkout` | Order created — `latestOrderId`, `amount: 299.98` |
+| 8 | `POST` | `/cart` | Cart: `customProductId × 2` |
+| ✅ **9** | `POST` | `/checkout` | `latestOrderId`, `amount: 299.98` |
 
 ---
 
@@ -838,7 +968,7 @@ POST {{baseUrl}}/checkout
 Authorization: Bearer {{accessToken}}
 ```
 
-**No request body** — checkout reads the authenticated user's cart from server-side state.
+**No request body.** The checkout endpoint reads the cart from server-side state for the authenticated user.
 
 #### Expected Response — `201 Created`
 
@@ -850,22 +980,32 @@ Authorization: Bearer {{accessToken}}
 }
 ```
 
+#### Response Field Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `orderId` | string | Unique order ID — saved as `latestOrderId` for 04.4 |
+| `amount` | number | Total cost computed from cart contents: `price × quantity` |
+| `status` | string | Always `"confirmed"` on successful checkout |
+
 #### How `amount` Is Calculated
 
 ```
-Product price  ×  Quantity added to cart  =  Order total
-   149.99      ×         2                =    299.98
-   (set in 03.2)    (set in 04.2)              (asserted here)
+Product price  ×  Quantity in cart  =  Order total
+   149.99      ×        2           =    299.98
+  (from 03.2)      (from 04.2)         (asserted here)
 ```
+
+> Changing the price in 03.2 or the quantity in 04.2 will break this assertion. These three values are tightly coupled across sections.
 
 #### Assertions
 
 | Test | Condition |
 |------|-----------|
-| Status is 201 | Order created |
-| `amount` = `299.98` | Exact total — price × quantity |
+| Status is 201 | Order created successfully |
+| `amount` = `299.98` | Total is exactly `price × quantity` |
 | `orderId` present | Order reference generated |
-| `status` = `"confirmed"` | Immediate confirmation |
+| `status` = `"confirmed"` | Order immediately confirmed |
 
 **Post-response script:**
 ```js
@@ -878,28 +1018,79 @@ pm.environment.set("latestOrderId", jsonData.orderId);
 
 ### [04.4] GET /orders — Verify Order Appears In History
 
-#### Call Chain — Required API Sequence
+#### What This Step Does
 
-> The order history is user-scoped, so you must be logged in. You also need the order ID from the previous step to verify the correct order appears in the list.
+Returns all orders belonging to the authenticated user as a flat array. In this test, it verifies that the order created in 04.3 (`latestOrderId`) is present in the list, confirming the order was persisted correctly.
+
+---
+
+#### Basic Flow A — Read Orders (No Prior Order Required)
+
+> You only need to be logged in. If no orders exist yet, the API returns an empty array `[]`. This is valid.
 
 ```
-[01.1]  POST /auth/register        → creates user in DB
+POST /auth/login   →  get accessToken
+        │
+        ▼
+✅  GET /orders     ←  YOU ARE HERE
+        └─ requires: accessToken
+        └─ returns: [] if no orders, or array of past orders
+```
+
+| Step | Method | Endpoint | Body / Params | What It Gives You |
+|------|--------|----------|---------------|-------------------|
+| 1 | `POST` | `/auth/login` | `{ email, password }` | `accessToken` |
+| ✅ **2** | `GET` | `/orders` | — | Array of orders (may be empty) |
+
+---
+
+#### Basic Flow B — Verify a Specific Order Exists (After Checkout)
+
+> To assert that a specific order appears in the list, you must have completed a checkout first. This is the meaningful test — proving end-to-end that checkout produces a visible, persistent order.
+
+```
+POST /auth/login   →  get accessToken
+        │
+        ▼
+GET /products      →  get a productId
+        │
+        ▼
+POST /cart         →  add item to cart
+        │
+        ▼
+POST /checkout     →  creates order, returns orderId
+        │              save the orderId
+        ▼
+✅  GET /orders     ←  YOU ARE HERE
+        └─ assert: the orderId from checkout is in the array
+```
+
+| Step | Method | Endpoint | Body / Params | What It Gives You |
+|------|--------|----------|---------------|-------------------|
+| 1 | `POST` | `/auth/login` | `{ email, password }` | `accessToken` |
+| 2 | `GET` | `/products` | `?page=1&limit=5` | A valid `productId` |
+| 3 | `POST` | `/cart` | `{ productId, quantity }` | Non-empty cart |
+| 4 | `POST` | `/checkout` | — (no body) | `orderId` |
+| ✅ **5** | `GET` | `/orders` | — | Array containing the new order |
+
+---
+
+#### This Test Suite's Automation Flow
+
+> Uses the `latestOrderId` captured by 04.3 to confirm the exact order created by this run is present.
+
+```
+POST /auth/register          →  user in DB
+POST /auth/login             →  sets: accessToken
+POST /auth/login (admin)     →  sets: adminAccessToken
+POST /products               →  sets: customProductId
+DELETE /cart                 →  cart cleared
+POST /cart                   →  cart: { customProductId × 2 }
+POST /checkout               →  sets: latestOrderId
           │
           ▼
-[01.2]  POST /auth/login           → sets: accessToken
-          │  ...  (all intermediate steps to build and checkout cart)
-          ▼
-[01.3]  POST /auth/login (admin)   → sets: adminAccessToken
-[03.2]  POST /products             → sets: customProductId
-[04.1]  DELETE /cart               → empty cart
-[04.2]  POST /cart                 → cart populated
-          │
-          ▼
-[04.3]  POST /checkout             → sets: latestOrderId
-          │
-          ▼
-✅ [04.4]  GET /orders               ← YOU ARE HERE
-             └─ asserts: latestOrderId appears in order list
+✅  GET /orders               ←  YOU ARE HERE
+        └─ asserts: array.some(order => order.id === latestOrderId) === true
 ```
 
 | Step | Method | Endpoint | What It Gives You |
@@ -926,18 +1117,23 @@ Authorization: Bearer {{accessToken}}
 
 ```json
 [
-  { "id": "ord_def456", "amount": 299.98, "status": "confirmed", "createdAt": "..." }
+  {
+    "id":        "ord_def456",
+    "amount":    299.98,
+    "status":    "confirmed",
+    "createdAt": "2026-05-31T10:05:00.000Z"
+  }
 ]
 ```
 
-Response is a flat array of all orders belonging to the authenticated user.
+Response is a **flat array** of all orders for the authenticated user.
 
 #### Assertions
 
 | Test | Condition |
 |------|-----------|
 | Status is 200 | Orders retrieved |
-| Array contains entry where `id === latestOrderId` | Order persisted and visible to user |
+| Array contains entry where `id === latestOrderId` | Order persisted and belongs to this user |
 
 ---
 
